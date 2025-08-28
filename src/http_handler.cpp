@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iomanip>
+#include <codecvt>
 
 HttpHandler::HttpHandler() {}
 
@@ -92,6 +93,17 @@ std::string HttpHandler::build_response(const HttpResponse& response) {
 HttpResponse HttpHandler::handle_upload(const HttpRequest& request) {
     HttpResponse response;
     
+		// 修复：安全地访问 Content-Length
+		auto content_length_it = request.headers.find("Content-Length");
+		if (content_length_it != request.headers.end()) {
+			std::cout << "Content-Length: " << content_length_it->second << std::endl;
+		}
+		else {
+			std::cout << "Content-Length: 未找到" << std::endl;
+		}
+
+		std::cout << "实际接收到的body长度: " << request.body.length() << std::endl;
+
     // 检查Content-Type是否为multipart/form-data
     auto content_type_it = request.headers.find("Content-Type");
     if (content_type_it == request.headers.end() || 
@@ -127,19 +139,21 @@ HttpResponse HttpHandler::handle_upload(const HttpRequest& request) {
     size_t pos = request.body.find("--" + boundary);
     while (pos != std::string::npos) {
         size_t next_boundary = request.body.find("--" + boundary, pos + boundary.length() + 2);
-        if (next_boundary == std::string::npos) break;
-        
+				if (next_boundary == std::string::npos) break;
+
         std::string part = request.body.substr(pos, next_boundary - pos);
         
-        // 查找文件名
-        size_t filename_pos = part.find("filename=\"");
-        if (filename_pos != std::string::npos) {
-            size_t filename_start = filename_pos + 10;
-            size_t filename_end = part.find("\"", filename_start);
-            if (filename_end != std::string::npos) {
-                filename = part.substr(filename_start, filename_end - filename_start);
-            }
-        }
+        //// 查找文件名
+        //size_t filename_pos = part.find("filename=\"");
+        //if (filename_pos != std::string::npos) {
+        //    size_t filename_start = filename_pos + 10;
+        //    size_t filename_end = part.find("\"", filename_start);
+        //    if (filename_end != std::string::npos) {
+        //        filename = part.substr(filename_start, filename_end - filename_start);
+        //    }
+        //}
+
+        filename = utf8_to_acp(parse_filename(part)) ;
         
         // 查找文件数据开始位置
         size_t data_start = part.find("\r\n\r\n");
@@ -663,3 +677,70 @@ std::pair<std::string, std::string> HttpHandler::parse_header_line(const std::st
     
     return {key, value};
 } 
+
+//文件名解析
+std::string HttpHandler::file_name_url_decode(const std::string& src) {
+	std::string ret;
+	char ch;
+	int ii;
+	for (size_t i = 0; i < src.length(); i++) {
+		if (src[i] == '%' && i + 2 < src.length()) {
+			sscanf(src.substr(i + 1, 2).c_str(), "%x", &ii);
+			ch = static_cast<char>(ii);
+			ret.push_back(ch);
+			i += 2;
+		}
+		else {
+			ret.push_back(src[i]);
+		}
+	}
+	return ret;
+}
+
+std::string HttpHandler::parse_filename(const std::string& part) {
+	// 优先找 filename*=
+	size_t pos = part.find("filename*=");
+	if (pos != std::string::npos) {
+		size_t start = pos + 10; // 跳过 filename*=
+		size_t end = part.find("\r\n", start);
+		std::string raw = part.substr(start, end - start);
+		// 形如 UTF-8''%E4%BA%BA...
+		size_t p = raw.find("''");
+		if (p != std::string::npos) {
+			std::string encoding = raw.substr(0, p); // "UTF-8"
+			std::string encoded = raw.substr(p + 2);
+			std::string decoded = file_name_url_decode(encoded);
+			return decoded; // 仍是 UTF-8
+		}
+	}
+
+	// 再找 filename="..."
+	pos = part.find("filename=\"");
+	if (pos != std::string::npos) {
+		size_t start = pos + 10;
+		size_t end = part.find("\"", start);
+		return part.substr(start, end - start); // 假设 UTF-8
+	}
+
+	return "";
+}
+
+std::string HttpHandler:: utf8_to_acp(const std::string& utf8) {
+	// UTF-8 -> UTF-16
+	int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, NULL, 0);
+	std::wstring wbuf(wlen, 0);
+	MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, &wbuf[0], wlen);
+
+	// UTF-16 -> ANSI(ACP)
+	int alen = WideCharToMultiByte(CP_ACP, 0, wbuf.c_str(), -1, NULL, 0, NULL, NULL);
+	std::string abuf(alen, 0);
+	WideCharToMultiByte(CP_ACP, 0, wbuf.c_str(), -1, &abuf[0], alen, NULL, NULL);
+
+	return abuf;
+}
+
+// UTF-8 → wstring
+std::wstring HttpHandler::utf8_to_wstring(const std::string& str) {
+	std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> conv;
+	return conv.from_bytes(str);
+}

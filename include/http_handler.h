@@ -39,6 +39,11 @@ public:
 private:
     std::vector<std::string> parse_headers(const std::string& header_text);
     std::pair<std::string, std::string> parse_header_line(const std::string& line);
+		std::string file_name_url_decode(const std::string& src);
+		std::string parse_filename(const std::string& part);
+    std::wstring utf8_to_wstring(const std::string& str);
+    //uft8 תGBK
+    std::string HttpHandler::utf8_to_acp(const std::string& utf8);
 };
 
 #endif // HTTP_HANDLER_H 

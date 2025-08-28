@@ -98,27 +98,89 @@ void Connection::async_read() {
     std::cout << "开始读取，连接状态: " << static_cast<int>(state_) << std::endl;
     
 #ifdef _WIN32
-    // 临时使用同步读取进行测试
-    read_buffer_.resize(Server::BUFFER_SIZE);
-    DWORD bytes_received = recv(socket_, &read_buffer_[0], read_buffer_.size(), 0);
+    // 先读取头部，确定 Content-Length
+    std::string full_request;
+    std::vector<char> temp_buffer(Server::BUFFER_SIZE);
     
-    if (bytes_received > 0) {
-        std::cout << "同步读取完成，收到 " << bytes_received << " 字节" << std::endl;
-        handle_read_completion(bytes_received);
-    } else if (bytes_received == 0) {
-        std::cout << "客户端关闭连接" << std::endl;
-        // 延迟关闭连接，给客户端时间处理响应
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        set_state(ConnectionState::CLOSING);
-    } else {
-        int error = WSAGetLastError();
-        if (error == WSAECONNRESET || error == WSAECONNABORTED) {
-            std::cout << "连接被客户端重置，错误码: " << error << std::endl;
+    // 循环读取直到找到头部结束标记
+    while (true) {
+        DWORD bytes_received = recv(socket_, temp_buffer.data(), temp_buffer.size(), 0);
+        
+        if (bytes_received > 0) {
+            full_request.append(temp_buffer.data(), bytes_received);
+            
+            // 检查是否找到了头部结束标记
+            if (full_request.find("\r\n\r\n") != std::string::npos) {
+                break;  // 头部读取完成
+            }
+        } else if (bytes_received == 0) {
+            std::cout << "客户端关闭连接" << std::endl;
+            set_state(ConnectionState::CLOSING);
+            return;
         } else {
-            std::cerr << "读取失败，错误码: " << error << std::endl;
+            int error = WSAGetLastError();
+            std::cerr << "读取头部失败，错误码: " << error << std::endl;
+            set_state(ConnectionState::CLOSING);
+            return;
         }
-        set_state(ConnectionState::CLOSING);
     }
+    
+    // 解析头部，获取 Content-Length
+    size_t header_end = full_request.find("\r\n\r\n");
+    std::string headers_text = full_request.substr(0, header_end);
+    
+    // 查找 Content-Length
+    size_t content_length_pos = headers_text.find("Content-Length:");
+    if (content_length_pos != std::string::npos) {
+        size_t value_start = content_length_pos + 15;  // "Content-Length:" 长度
+        size_t value_end = headers_text.find("\r\n", value_start);
+        if (value_end == std::string::npos) value_end = headers_text.length();
+        
+        std::string content_length_str = headers_text.substr(value_start, value_end - value_start);
+        // 去除空格
+        content_length_str.erase(0, content_length_str.find_first_not_of(" \t"));
+        content_length_str.erase(content_length_str.find_last_not_of(" \t") + 1);
+        
+        int expected_content_length = std::stoi(content_length_str);
+        std::cout << "预期 Content-Length: " << expected_content_length << " 字节" << std::endl;
+        
+        // 继续读取剩余的数据
+        int remaining_bytes = expected_content_length - (full_request.length() - header_end - 4);
+        
+        if (remaining_bytes > 0) {
+            std::cout << "需要继续读取 " << remaining_bytes << " 字节" << std::endl;
+            
+            while (remaining_bytes > 0) {
+                int bytes_to_read = (remaining_bytes < (int)temp_buffer.size()) ? remaining_bytes : (int)temp_buffer.size();
+                DWORD bytes_received = recv(socket_, temp_buffer.data(), bytes_to_read, 0);
+                
+                if (bytes_received > 0) {
+                    full_request.append(temp_buffer.data(), bytes_received);
+                    remaining_bytes -= bytes_received;
+                    std::cout << "继续读取 " << bytes_received << " 字节，剩余 " << remaining_bytes << " 字节" << std::endl;
+                } else if (bytes_received == 0) {
+                    std::cout << "客户端在传输过程中关闭连接" << std::endl;
+                    set_state(ConnectionState::CLOSING);
+                    return;
+                } else {
+                    int error = WSAGetLastError();
+                    std::cerr << "继续读取失败，错误码: " << error << std::endl;
+                    set_state(ConnectionState::CLOSING);
+                    return;
+                }
+            }
+        }
+        
+        std::cout << "完整读取完成，总数据长度: " << full_request.length() << " 字节" << std::endl;
+        read_buffer_.assign(full_request.begin(), full_request.end());
+        handle_read_completion(full_request.length());
+        
+    } else {
+        std::cout << "未找到 Content-Length，使用已读取的数据" << std::endl;
+        read_buffer_.assign(full_request.begin(), full_request.end());
+        handle_read_completion(full_request.length());
+    }
+    
 #else
     // Linux epoll非阻塞读取
     read_buffer_.resize(Server::BUFFER_SIZE);
