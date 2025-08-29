@@ -143,7 +143,6 @@ HttpResponse HttpHandler::handle_upload(const HttpRequest& request) {
         if (next_boundary == std::string::npos) break;
 
         std::string part = request.body.substr(pos, next_boundary - pos);
-        
         std::string filename = utf8_to_acp(parse_filename(part));
         
         // 查找文件数据开始位置

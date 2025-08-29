@@ -169,6 +169,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     int port = 8080;
+    std::string address = "127.0.0.1";
     size_t max_connections = PerformanceConfig::DEFAULT_MAX_CONNECTIONS;
     size_t thread_pool_size = PerformanceConfig::DEFAULT_THREAD_POOL_SIZE;
     
@@ -213,7 +214,7 @@ int main(int argc, char* argv[]) {
 #endif
     
     // 创建并启动高性能服务器
-    Server server(port, max_connections, thread_pool_size);
+    Server server(address,port, max_connections, thread_pool_size);
     g_server = &server;
     
     if (!server.start()) {

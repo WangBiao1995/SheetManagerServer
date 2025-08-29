@@ -391,8 +391,8 @@ void Connection::handle_write_completion(size_t bytes_written) {
 }
 
 // Server 实现
-Server::Server(int port, size_t max_connections, size_t thread_pool_size)
-    : port_(port), server_socket_(INVALID_SOCKET), running_(false), 
+Server::Server(const std::string& address, int port, size_t max_connections, size_t thread_pool_size)
+    : address_(address), port_(port), server_socket_(INVALID_SOCKET), running_(false), 
       active_connections_(0), total_requests_(0),
       max_connections_(max_connections), thread_pool_size_(thread_pool_size) {
     
@@ -431,11 +431,26 @@ bool Server::start() {
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    
+    // 根据地址字符串设置监听地址
+    if (address_ == "0.0.0.0" || address_ == "") {
+        // 监听所有地址
+        server_addr.sin_addr.s_addr = INADDR_ANY;
+        std::cout << "监听所有网络接口" << std::endl;
+    } else {
+        // 解析指定的IP地址
+        if (inet_pton(AF_INET, address_.c_str(), &server_addr.sin_addr) != 1) {
+            std::cerr << "无效的IP地址: " << address_ << std::endl;
+            socket_close(server_socket_);
+            return false;
+        }
+        std::cout << "监听指定地址: " << address_ << std::endl;
+    }
+    
     server_addr.sin_port = htons(port_);
     
     if (bind(server_socket_, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        std::cerr << "绑定端口失败" << std::endl;
+        std::cerr << "绑定地址 " << address_ << ":" << port_ << " 失败" << std::endl;
         socket_close(server_socket_);
         return false;
     }
@@ -459,7 +474,7 @@ bool Server::start() {
 #endif
     
     std::cout << "高性能异步服务器启动成功！" << std::endl;
-    std::cout << "监听端口: " << port_ << std::endl;
+    std::cout << "监听地址: " << address_ << ":" << port_ << std::endl;
     std::cout << "最大连接数: " << max_connections_ << std::endl;
     std::cout << "工作线程数: " << thread_pool_size_ << std::endl;
     

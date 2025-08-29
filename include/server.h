@@ -73,7 +73,8 @@ struct AsyncTask {
 
 class Server {
 public:
-    Server(int port = 8080, size_t max_connections = 1000, size_t thread_pool_size = 4);
+    Server(const std::string& address = "0.0.0.0", int port = 8080, 
+           size_t max_connections = 1000, size_t thread_pool_size = 4);
     ~Server();
     
     bool start();
@@ -110,6 +111,7 @@ private:
     void handle_epoll_events();
 #endif
     
+    std::string address_;  // 添加地址成员变量
     int port_;
     socket_t server_socket_;
     std::atomic<bool> running_;
