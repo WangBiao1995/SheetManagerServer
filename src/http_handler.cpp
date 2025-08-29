@@ -93,16 +93,16 @@ std::string HttpHandler::build_response(const HttpResponse& response) {
 HttpResponse HttpHandler::handle_upload(const HttpRequest& request) {
     HttpResponse response;
     
-		// 修复：安全地访问 Content-Length
-		auto content_length_it = request.headers.find("Content-Length");
-		if (content_length_it != request.headers.end()) {
-			std::cout << "Content-Length: " << content_length_it->second << std::endl;
-		}
-		else {
-			std::cout << "Content-Length: 未找到" << std::endl;
-		}
+    // 修复：安全地访问 Content-Length
+    auto content_length_it = request.headers.find("Content-Length");
+    if (content_length_it != request.headers.end()) {
+        std::cout << "Content-Length: " << content_length_it->second << std::endl;
+    }
+    else {
+        std::cout << "Content-Length: 未找到" << std::endl;
+    }
 
-		std::cout << "实际接收到的body长度: " << request.body.length() << std::endl;
+    std::cout << "实际接收到的body长度: " << request.body.length() << std::endl;
 
     // 检查Content-Type是否为multipart/form-data
     auto content_type_it = request.headers.find("Content-Type");
@@ -132,40 +132,31 @@ HttpResponse HttpHandler::handle_upload(const HttpRequest& request) {
         return response;
     }
     
-    // 查找文件数据
-    std::string file_data;
-    std::string filename;
+    // 存储所有文件信息
+    std::vector<std::pair<std::string, std::string>> files_to_save;
+    std::vector<std::string> saved_files;
+    std::vector<std::string> failed_files;
     
     size_t pos = request.body.find("--" + boundary);
     while (pos != std::string::npos) {
         size_t next_boundary = request.body.find("--" + boundary, pos + boundary.length() + 2);
-				if (next_boundary == std::string::npos) break;
+        if (next_boundary == std::string::npos) break;
 
         std::string part = request.body.substr(pos, next_boundary - pos);
         
-        //// 查找文件名
-        //size_t filename_pos = part.find("filename=\"");
-        //if (filename_pos != std::string::npos) {
-        //    size_t filename_start = filename_pos + 10;
-        //    size_t filename_end = part.find("\"", filename_start);
-        //    if (filename_end != std::string::npos) {
-        //        filename = part.substr(filename_start, filename_end - filename_start);
-        //    }
-        //}
-
-        filename = utf8_to_acp(parse_filename(part)) ;
+        std::string filename = utf8_to_acp(parse_filename(part));
         
         // 查找文件数据开始位置
         size_t data_start = part.find("\r\n\r\n");
-        if (data_start != std::string::npos) {
-            file_data = part.substr(data_start + 4);
-            break;
+        if (data_start != std::string::npos && !filename.empty()) {
+            std::string file_data = part.substr(data_start + 4);
+            files_to_save.push_back({filename, file_data});
         }
         
         pos = next_boundary;
     }
     
-    if (filename.empty() || file_data.empty()) {
+    if (files_to_save.empty()) {
         response.status_code = 400;
         response.status_text = "Bad Request";
         response.body = "未找到文件数据";
@@ -173,19 +164,51 @@ HttpResponse HttpHandler::handle_upload(const HttpRequest& request) {
         return response;
     }
     
-    // 保存文件
+    // 保存所有文件
     FileManager file_manager;
-    if (file_manager.save_file(filename, file_data)) {
+    for (const auto& file_info : files_to_save) {
+        const std::string& filename = file_info.first;
+        const std::string& file_data = file_info.second;
+        
+        if (file_manager.save_file(filename, file_data)) {
+            saved_files.push_back(filename);
+        } else {
+            failed_files.push_back(filename);
+        }
+    }
+    
+    // 构建响应消息
+    std::ostringstream response_body;
+    if (!saved_files.empty()) {
+        response_body << "成功上传 " << saved_files.size() << " 个文件: ";
+        for (size_t i = 0; i < saved_files.size(); ++i) {
+            if (i > 0) response_body << ", ";
+            response_body << saved_files[i];
+        }
+    }
+    
+    if (!failed_files.empty()) {
+        if (!saved_files.empty()) response_body << "\n";
+        response_body << "上传失败 " << failed_files.size() << " 个文件: ";
+        for (size_t i = 0; i < failed_files.size(); ++i) {
+            if (i > 0) response_body << ", ";
+            response_body << failed_files[i];
+        }
+    }
+    
+    if (failed_files.empty()) {
         response.status_code = 200;
         response.status_text = "OK";
-        response.body = "文件上传成功: " + filename;
-        response.headers["Content-Type"] = "text/plain";
-    } else {
+    } else if (saved_files.empty()) {
         response.status_code = 500;
         response.status_text = "Internal Server Error";
-        response.body = "文件保存失败";
-        response.headers["Content-Type"] = "text/plain";
+    } else {
+        response.status_code = 207; // Multi-Status
+        response.status_text = "Multi-Status";
     }
+    
+    response.body = response_body.str();
+    response.headers["Content-Type"] = "text/plain; charset=utf-8";
     
     return response;
 }

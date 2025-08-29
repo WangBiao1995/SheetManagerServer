@@ -202,7 +202,7 @@ int main(int argc, char* argv[]) {
     std::cout << "==========================================" << std::endl;
     
     // 测试文件操作
-    test_file_operations();
+   // test_file_operations();
     
     // 设置信号处理器
 #ifdef _WIN32
